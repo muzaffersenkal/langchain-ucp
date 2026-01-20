@@ -4,6 +4,7 @@ This module provides the main UCPToolkit class that bundles all UCP tools
 for easy integration with LangChain agents.
 """
 
+import logging
 from typing import List
 
 from langchain_core.tools import BaseTool
@@ -24,6 +25,8 @@ from langchain_ucp.tools import (
     GetOrderTool,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class UCPToolkit(BaseModel):
     """Toolkit for UCP (Universal Commerce Protocol) operations.
@@ -36,8 +39,8 @@ class UCPToolkit(BaseModel):
         >>> from langchain_openai import ChatOpenAI
         >>> from langgraph.prebuilt import create_react_agent
         >>>
-        >>> # Create toolkit
-        >>> toolkit = UCPToolkit(merchant_url="http://localhost:8000")
+        >>> # Create toolkit with verbose logging
+        >>> toolkit = UCPToolkit(merchant_url="http://localhost:8000", verbose=True)
         >>>
         >>> # Create agent
         >>> llm = ChatOpenAI(model="gpt-4o")
@@ -52,8 +55,7 @@ class UCPToolkit(BaseModel):
         merchant_url: URL of the UCP merchant server
         agent_name: Name of this agent for UCP-Agent header
         products: Optional custom product catalog
-        client: UCP HTTP client (auto-created)
-        store: UCP store for state management (auto-created)
+        verbose: Enable verbose logging
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -67,6 +69,10 @@ class UCPToolkit(BaseModel):
         default=None,
         description="Optional custom product catalog",
     )
+    verbose: bool = Field(
+        default=False,
+        description="Enable verbose logging of API calls and tool operations",
+    )
 
     # Internal components (created on initialization)
     _client: UCPClient | None = None
@@ -74,14 +80,27 @@ class UCPToolkit(BaseModel):
 
     def model_post_init(self, __context) -> None:
         """Initialize client and store after model creation."""
+        if self.verbose:
+            # Configure logging for verbose output
+            logging.basicConfig(
+                level=logging.DEBUG,
+                format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            )
+            logger.debug(f"[UCPToolkit] Initializing with merchant_url={self.merchant_url}")
+
         self._client = UCPClient(
             merchant_url=self.merchant_url,
             agent_name=self.agent_name,
+            verbose=self.verbose,
         )
         self._store = UCPStore(
             client=self._client,
             products=self.products,
+            verbose=self.verbose,
         )
+
+        if self.verbose:
+            logger.debug(f"[UCPToolkit] Loaded {len(self._store.products)} products")
 
     @property
     def client(self) -> UCPClient:
@@ -90,6 +109,7 @@ class UCPToolkit(BaseModel):
             self._client = UCPClient(
                 merchant_url=self.merchant_url,
                 agent_name=self.agent_name,
+                verbose=self.verbose,
             )
         return self._client
 
@@ -100,6 +120,7 @@ class UCPToolkit(BaseModel):
             self._store = UCPStore(
                 client=self.client,
                 products=self.products,
+                verbose=self.verbose,
             )
         return self._store
 
@@ -109,18 +130,23 @@ class UCPToolkit(BaseModel):
         Returns:
             List of LangChain tools for UCP operations
         """
-        return [
-            SearchCatalogTool(store=self.store),
-            AddToCheckoutTool(store=self.store),
-            RemoveFromCheckoutTool(store=self.store),
-            UpdateCheckoutTool(store=self.store),
-            GetCheckoutTool(store=self.store),
-            UpdateCustomerDetailsTool(store=self.store),
-            StartPaymentTool(store=self.store),
-            CompleteCheckoutTool(store=self.store),
-            CancelCheckoutTool(store=self.store),
-            GetOrderTool(store=self.store),
+        tools = [
+            SearchCatalogTool(store=self.store, verbose=self.verbose),
+            AddToCheckoutTool(store=self.store, verbose=self.verbose),
+            RemoveFromCheckoutTool(store=self.store, verbose=self.verbose),
+            UpdateCheckoutTool(store=self.store, verbose=self.verbose),
+            GetCheckoutTool(store=self.store, verbose=self.verbose),
+            UpdateCustomerDetailsTool(store=self.store, verbose=self.verbose),
+            StartPaymentTool(store=self.store, verbose=self.verbose),
+            CompleteCheckoutTool(store=self.store, verbose=self.verbose),
+            CancelCheckoutTool(store=self.store, verbose=self.verbose),
+            GetOrderTool(store=self.store, verbose=self.verbose),
         ]
+
+        if self.verbose:
+            logger.debug(f"[UCPToolkit] Created {len(tools)} tools")
+
+        return tools
 
     async def close(self) -> None:
         """Close the toolkit and release resources."""
@@ -131,3 +157,5 @@ class UCPToolkit(BaseModel):
         """Clear the current checkout session."""
         if self._store is not None:
             self._store.clear_session()
+            if self.verbose:
+                logger.debug("[UCPToolkit] Session cleared")

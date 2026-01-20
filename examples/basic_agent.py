@@ -4,10 +4,15 @@ Prerequisites:
 - pip install langchain-ucp langchain-openai langgraph
 - Set OPENAI_API_KEY environment variable
 - UCP merchant server running at http://localhost:8000
+
+Usage:
+    python basic_agent.py              # Normal mode
+    python basic_agent.py --verbose    # Verbose mode with debug logs
 """
 
 import asyncio
 import os
+import sys
 
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
@@ -22,8 +27,14 @@ async def main():
         print("Please set OPENAI_API_KEY environment variable")
         return
 
-    # Create toolkit
-    toolkit = UCPToolkit(merchant_url="http://localhost:8000")
+    # Check for verbose flag
+    verbose = "--verbose" in sys.argv or "-v" in sys.argv
+
+    # Create toolkit (with optional verbose logging)
+    toolkit = UCPToolkit(
+        merchant_url="http://localhost:8000",
+        verbose=verbose,
+    )
 
     # Create agent
     llm = ChatOpenAI(model="gpt-4o", temperature=0.7)

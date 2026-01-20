@@ -129,6 +129,11 @@ class SearchCatalogTool(BaseTool):
     Returns matching products with their IDs, titles, and prices."""
     args_schema: Type[BaseModel] = SearchCatalogInput
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -136,11 +141,14 @@ class SearchCatalogTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Search catalog synchronously."""
+        self._log(f"Searching for: {query}")
         result = self.store.search_products(query)
 
         if not result.products:
+            self._log(f"No products found for '{query}'")
             return f"No products found for '{query}'."
 
+        self._log(f"Found {result.total} products")
         lines = [f"Found {result.total} product(s) for '{query}':\n"]
         for p in result.products:
             lines.append(f"  - **{p.title}**")
@@ -167,6 +175,11 @@ class AddToCheckoutTool(BaseTool):
     Use search_shopping_catalog first to find product IDs."""
     args_schema: Type[BaseModel] = AddToCheckoutInput
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -184,12 +197,15 @@ class AddToCheckoutTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Add to checkout asynchronously."""
+        self._log(f"Adding product_id={product_id}, quantity={quantity}")
         try:
             product = self.store.get_product(product_id)
             if not product:
+                self._log(f"Product not found: {product_id}")
                 return f"Product '{product_id}' not found. Use search_shopping_catalog to find available products."
 
             checkout = await self.store.add_to_checkout(product_id, quantity)
+            self._log(f"Added to checkout_id={checkout.id}")
             return f"Added {quantity}x {product.title} to cart.\n\n{format_checkout_summary(checkout)}"
         except Exception as e:
             logger.exception("Error adding to checkout")
@@ -203,6 +219,11 @@ class RemoveFromCheckoutTool(BaseTool):
     description: str = """Removes a product from the checkout session."""
     args_schema: Type[BaseModel] = RemoveFromCheckoutInput
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -218,8 +239,10 @@ class RemoveFromCheckoutTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Remove from checkout asynchronously."""
+        self._log(f"Removing product_id={product_id}")
         try:
             checkout = await self.store.remove_from_checkout(product_id)
+            self._log(f"Removed from checkout_id={checkout.id}")
             return f"Removed item from cart.\n\n{format_checkout_summary(checkout)}"
         except ValueError as e:
             return str(e)
@@ -236,6 +259,11 @@ class UpdateCheckoutTool(BaseTool):
     Set quantity to 0 to remove the item."""
     args_schema: Type[BaseModel] = UpdateCheckoutInput
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -253,9 +281,11 @@ class UpdateCheckoutTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Update checkout asynchronously."""
+        self._log(f"Updating product_id={product_id}, quantity={quantity}")
         try:
             checkout = await self.store.update_checkout_quantity(product_id, quantity)
             action = "removed from" if quantity == 0 else "updated in"
+            self._log(f"Item {action} checkout_id={checkout.id}")
             return f"Item {action} cart.\n\n{format_checkout_summary(checkout)}"
         except ValueError as e:
             return str(e)
@@ -270,6 +300,11 @@ class GetCheckoutTool(BaseTool):
     name: str = "get_checkout"
     description: str = """Retrieves the current checkout session with all items and totals."""
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -283,10 +318,13 @@ class GetCheckoutTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Get checkout asynchronously."""
+        self._log("Getting current checkout")
         try:
             checkout = await self.store.get_checkout()
             if not checkout:
+                self._log("No active checkout")
                 return "No active checkout session. Add items first."
+            self._log(f"Retrieved checkout_id={checkout.id}")
             return format_checkout_summary(checkout)
         except Exception as e:
             logger.exception("Error getting checkout")
@@ -302,6 +340,11 @@ class UpdateCustomerDetailsTool(BaseTool):
     This prepares the checkout for payment."""
     args_schema: Type[BaseModel] = UpdateCustomerDetailsInput
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -333,6 +376,7 @@ class UpdateCustomerDetailsTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Update customer details asynchronously."""
+        self._log(f"Updating customer: {first_name} {last_name}, {address_locality}, {address_region}")
         try:
             checkout = await self.store.update_customer_details(
                 first_name=first_name,
@@ -345,6 +389,7 @@ class UpdateCustomerDetailsTool(BaseTool):
                 extended_address=extended_address,
                 email=email,
             )
+            self._log(f"Updated customer details for checkout_id={checkout.id}")
             return f"Updated customer details.\n\n{format_checkout_summary(checkout)}"
         except ValueError as e:
             return str(e)
@@ -361,6 +406,11 @@ class StartPaymentTool(BaseTool):
     Call this after adding items and customer details.
     Returns the checkout status and any missing information."""
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -374,10 +424,13 @@ class StartPaymentTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Start payment asynchronously."""
+        self._log("Starting payment process")
         try:
             result = await self.store.start_payment()
             if isinstance(result, str):
+                self._log(f"Payment not ready: {result}")
                 return f"Checkout is not ready. {result}"
+            self._log(f"Checkout ready for payment, checkout_id={result.id}")
             return f"Checkout is ready for payment!\n\n{format_checkout_summary(result)}\n\nUse complete_checkout to finalize the order."
         except ValueError as e:
             return str(e)
@@ -395,6 +448,11 @@ class CompleteCheckoutTool(BaseTool):
     Use 'mock_payment_handler' with 'success_token' for testing."""
     args_schema: Type[BaseModel] = CompleteCheckoutInput
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -412,11 +470,13 @@ class CompleteCheckoutTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Complete checkout asynchronously."""
+        self._log(f"Completing checkout with handler={payment_handler_id}")
         try:
             checkout = await self.store.complete_checkout(
                 payment_handler_id=payment_handler_id,
                 payment_token=payment_token,
             )
+            self._log(f"Order completed! order_id={checkout.order.id if checkout.order else 'N/A'}")
             return f"Order placed successfully!\n\n{format_checkout_summary(checkout)}"
         except ValueError as e:
             return str(e)
@@ -431,6 +491,11 @@ class CancelCheckoutTool(BaseTool):
     name: str = "cancel_checkout"
     description: str = """Cancels the current checkout session and clears the cart."""
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -444,8 +509,10 @@ class CancelCheckoutTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Cancel checkout asynchronously."""
+        self._log("Cancelling checkout")
         try:
             checkout = await self.store.cancel_checkout()
+            self._log(f"Cancelled checkout_id={checkout.id}")
             return f"Checkout cancelled.\n\n{format_checkout_summary(checkout)}"
         except ValueError as e:
             return str(e)
@@ -461,6 +528,11 @@ class GetOrderTool(BaseTool):
     description: str = """Gets details of a placed order by ID."""
     args_schema: Type[BaseModel] = GetOrderInput
     store: UCPStore = Field(exclude=True)
+    verbose: bool = Field(default=False, exclude=True)
+
+    def _log(self, message: str) -> None:
+        if self.verbose:
+            logger.debug(f"[{self.name}] {message}")
 
     def _run(
         self,
@@ -476,6 +548,7 @@ class GetOrderTool(BaseTool):
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Get order asynchronously."""
+        self._log(f"Getting order_id={order_id}")
         try:
             order = await self.store.get_order(order_id)
 
@@ -501,6 +574,7 @@ class GetOrderTool(BaseTool):
                         f"  - {total.get('type', '').title()}: {format_price(total.get('amount', 0))}"
                     )
 
+            self._log(f"Retrieved order details")
             return "\n".join(lines)
         except Exception as e:
             logger.exception("Error getting order")

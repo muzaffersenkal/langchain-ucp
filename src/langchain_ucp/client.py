@@ -2,6 +2,7 @@
 
 import uuid
 import logging
+import json
 from typing import Any
 
 import httpx
@@ -25,6 +26,7 @@ class UCPClientConfig(BaseModel):
     merchant_url: str
     agent_name: str = "langchain-ucp-agent"
     timeout: float = 30.0
+    verbose: bool = False
 
 
 class UCPClient:
@@ -36,6 +38,7 @@ class UCPClient:
     Attributes:
         config: Client configuration
         http_client: Underlying httpx async client
+        verbose: Enable verbose logging
     """
 
     def __init__(
@@ -43,6 +46,7 @@ class UCPClient:
         merchant_url: str,
         agent_name: str = "langchain-ucp-agent",
         timeout: float = 30.0,
+        verbose: bool = False,
     ):
         """Initialize UCP client.
 
@@ -50,13 +54,31 @@ class UCPClient:
             merchant_url: Base URL of the UCP merchant server
             agent_name: Name of this agent for UCP-Agent header
             timeout: Request timeout in seconds
+            verbose: Enable verbose logging of requests/responses
         """
         self.config = UCPClientConfig(
             merchant_url=merchant_url.rstrip("/"),
             agent_name=agent_name,
             timeout=timeout,
+            verbose=verbose,
         )
         self._http_client: httpx.AsyncClient | None = None
+
+        if verbose:
+            logging.getLogger(__name__).setLevel(logging.DEBUG)
+
+    @property
+    def verbose(self) -> bool:
+        """Check if verbose mode is enabled."""
+        return self.config.verbose
+
+    def _log(self, message: str, data: Any = None) -> None:
+        """Log message if verbose mode is enabled."""
+        if self.verbose:
+            if data:
+                logger.debug(f"[UCP] {message}: {json.dumps(data, indent=2, default=str)}")
+            else:
+                logger.debug(f"[UCP] {message}")
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -72,81 +94,60 @@ class UCPClient:
             self._http_client = None
 
     def _get_headers(self, idempotency_key: str | None = None) -> dict[str, str]:
-        """Get standard UCP headers required by UCP protocol.
-
-        Args:
-            idempotency_key: Optional idempotency key for the request
-
-        Returns:
-            Dictionary of HTTP headers
-        """
-        return {
+        """Get standard UCP headers required by UCP protocol."""
+        headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
             "UCP-Agent": f'{self.config.agent_name}; version="{UCP_VERSION}"',
-            "Request-Signature": "dummy-signature",  # In production, compute HMAC
+            "Request-Signature": "dummy-signature",
             "Request-Id": str(uuid.uuid4()),
             "Idempotency-Key": idempotency_key or str(uuid.uuid4()),
         }
+        return headers
 
     async def discover(self) -> UcpDiscoveryProfile:
-        """Discover merchant UCP profile.
+        """Discover merchant UCP profile."""
+        url = f"{self.config.merchant_url}/.well-known/ucp"
+        self._log(f"GET {url}")
 
-        Returns:
-            UCP discovery profile with capabilities and payment handlers
-
-        Raises:
-            httpx.HTTPError: If the request fails
-        """
-        response = await self.http_client.get(
-            f"{self.config.merchant_url}/.well-known/ucp"
-        )
+        response = await self.http_client.get(url)
         response.raise_for_status()
-        return UcpDiscoveryProfile.model_validate(response.json())
+
+        data = response.json()
+        self._log("Discovery response", data)
+        return UcpDiscoveryProfile.model_validate(data)
 
     async def create_checkout(
         self,
         request: CheckoutCreateRequest,
         idempotency_key: str | None = None,
     ) -> CheckoutResponse:
-        """Create a new checkout session.
+        """Create a new checkout session."""
+        url = f"{self.config.merchant_url}/checkout-sessions"
+        payload = request.model_dump(mode="json", by_alias=True, exclude_none=True)
+        headers = self._get_headers(idempotency_key)
 
-        Args:
-            request: Checkout creation request
-            idempotency_key: Optional idempotency key
+        self._log(f"POST {url}")
+        self._log("Request payload", payload)
 
-        Returns:
-            Created checkout session
-
-        Raises:
-            httpx.HTTPError: If the request fails
-        """
-        response = await self.http_client.post(
-            f"{self.config.merchant_url}/checkout-sessions",
-            json=request.model_dump(mode="json", by_alias=True, exclude_none=True),
-            headers=self._get_headers(idempotency_key),
-        )
+        response = await self.http_client.post(url, json=payload, headers=headers)
         response.raise_for_status()
-        return CheckoutResponse.model_validate(response.json())
+
+        data = response.json()
+        self._log("Response", data)
+        return CheckoutResponse.model_validate(data)
 
     async def get_checkout(self, checkout_id: str) -> CheckoutResponse:
-        """Get checkout session by ID.
+        """Get checkout session by ID."""
+        url = f"{self.config.merchant_url}/checkout-sessions/{checkout_id}"
+        self._log(f"GET {url}")
 
-        Args:
-            checkout_id: Checkout session ID
-
-        Returns:
-            Checkout session data
-
-        Raises:
-            httpx.HTTPError: If the request fails
-        """
-        response = await self.http_client.get(
-            f"{self.config.merchant_url}/checkout-sessions/{checkout_id}",
-            headers=self._get_headers(),
-        )
+        response = await self.http_client.get(url, headers=self._get_headers())
         response.raise_for_status()
-        return CheckoutResponse.model_validate(response.json())
+
+        data = response.json()
+        self._log("Response", data)
+        return CheckoutResponse.model_validate(data)
 
     async def update_checkout(
         self,
@@ -154,26 +155,20 @@ class UCPClient:
         request: CheckoutUpdateRequest,
         idempotency_key: str | None = None,
     ) -> CheckoutResponse:
-        """Update an existing checkout session.
+        """Update an existing checkout session."""
+        url = f"{self.config.merchant_url}/checkout-sessions/{checkout_id}"
+        payload = request.model_dump(mode="json", by_alias=True, exclude_none=True)
+        headers = self._get_headers(idempotency_key)
 
-        Args:
-            checkout_id: Checkout session ID
-            request: Checkout update request
-            idempotency_key: Optional idempotency key
+        self._log(f"PUT {url}")
+        self._log("Request payload", payload)
 
-        Returns:
-            Updated checkout session
-
-        Raises:
-            httpx.HTTPError: If the request fails
-        """
-        response = await self.http_client.put(
-            f"{self.config.merchant_url}/checkout-sessions/{checkout_id}",
-            json=request.model_dump(mode="json", by_alias=True, exclude_none=True),
-            headers=self._get_headers(idempotency_key),
-        )
+        response = await self.http_client.put(url, json=payload, headers=headers)
         response.raise_for_status()
-        return CheckoutResponse.model_validate(response.json())
+
+        data = response.json()
+        self._log("Response", data)
+        return CheckoutResponse.model_validate(data)
 
     async def complete_checkout(
         self,
@@ -182,72 +177,48 @@ class UCPClient:
         risk_signals: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> CheckoutResponse:
-        """Complete a checkout session with payment.
-
-        Args:
-            checkout_id: Checkout session ID
-            payment_data: Payment information
-            risk_signals: Optional risk assessment signals
-            idempotency_key: Optional idempotency key
-
-        Returns:
-            Completed checkout with order confirmation
-
-        Raises:
-            httpx.HTTPError: If the request fails
-        """
+        """Complete a checkout session with payment."""
+        url = f"{self.config.merchant_url}/checkout-sessions/{checkout_id}/complete"
         payload = {
             "payment": payment_data,
             "risk_signals": risk_signals or {},
         }
+        headers = self._get_headers(idempotency_key)
 
-        response = await self.http_client.post(
-            f"{self.config.merchant_url}/checkout-sessions/{checkout_id}/complete",
-            json=payload,
-            headers=self._get_headers(idempotency_key),
-        )
+        self._log(f"POST {url}")
+        self._log("Request payload", payload)
+
+        response = await self.http_client.post(url, json=payload, headers=headers)
         response.raise_for_status()
-        return CheckoutResponse.model_validate(response.json())
+
+        data = response.json()
+        self._log("Response", data)
+        return CheckoutResponse.model_validate(data)
 
     async def cancel_checkout(
         self,
         checkout_id: str,
         idempotency_key: str | None = None,
     ) -> CheckoutResponse:
-        """Cancel a checkout session.
+        """Cancel a checkout session."""
+        url = f"{self.config.merchant_url}/checkout-sessions/{checkout_id}/cancel"
+        self._log(f"POST {url}")
 
-        Args:
-            checkout_id: Checkout session ID
-            idempotency_key: Optional idempotency key
-
-        Returns:
-            Cancelled checkout session
-
-        Raises:
-            httpx.HTTPError: If the request fails
-        """
-        response = await self.http_client.post(
-            f"{self.config.merchant_url}/checkout-sessions/{checkout_id}/cancel",
-            headers=self._get_headers(idempotency_key),
-        )
+        response = await self.http_client.post(url, headers=self._get_headers(idempotency_key))
         response.raise_for_status()
-        return CheckoutResponse.model_validate(response.json())
+
+        data = response.json()
+        self._log("Response", data)
+        return CheckoutResponse.model_validate(data)
 
     async def get_order(self, order_id: str) -> dict[str, Any]:
-        """Get order by ID.
+        """Get order by ID."""
+        url = f"{self.config.merchant_url}/orders/{order_id}"
+        self._log(f"GET {url}")
 
-        Args:
-            order_id: Order ID
-
-        Returns:
-            Order data
-
-        Raises:
-            httpx.HTTPError: If the request fails
-        """
-        response = await self.http_client.get(
-            f"{self.config.merchant_url}/orders/{order_id}",
-            headers=self._get_headers(),
-        )
+        response = await self.http_client.get(url, headers=self._get_headers())
         response.raise_for_status()
-        return response.json()
+
+        data = response.json()
+        self._log("Response", data)
+        return data

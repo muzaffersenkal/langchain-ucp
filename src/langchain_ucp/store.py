@@ -56,22 +56,29 @@ class UCPStore:
         client: UCP HTTP client
         checkout_id: Current checkout session ID
         products: Product catalog
+        verbose: Enable verbose logging
     """
 
     def __init__(
         self,
         client: UCPClient,
         products: list[Product] | None = None,
+        verbose: bool = False,
     ):
         """Initialize UCP Store.
 
         Args:
             client: UCP HTTP client instance
             products: Optional product catalog. If not provided, uses default.
+            verbose: Enable verbose logging
         """
         self.client = client
         self.checkout_id: str | None = None
         self._checkout_cache: CheckoutResponse | None = None
+        self.verbose = verbose
+
+        if verbose:
+            logging.getLogger(__name__).setLevel(logging.DEBUG)
 
         # Initialize product catalog
         self.products: dict[str, Product] = {}
@@ -80,6 +87,11 @@ class UCPStore:
                 self.products[product.id] = product
         else:
             self._initialize_default_products()
+
+    def _log(self, message: str) -> None:
+        """Log message if verbose mode is enabled."""
+        if self.verbose:
+            logger.debug(f"[UCPStore] {message}")
 
     def _initialize_default_products(self) -> None:
         """Initialize default product catalog (flower shop example)."""
