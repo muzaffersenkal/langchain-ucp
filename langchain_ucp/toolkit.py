@@ -35,12 +35,21 @@ class UCPToolkit(BaseModel):
     that can interact with UCP-compliant merchants.
 
     Example:
-        >>> from langchain_ucp import UCPToolkit
+        >>> from langchain_ucp import UCPToolkit, Product
         >>> from langchain_openai import ChatOpenAI
         >>> from langgraph.prebuilt import create_react_agent
         >>>
-        >>> # Create toolkit with verbose logging
-        >>> toolkit = UCPToolkit(merchant_url="http://localhost:8000", verbose=True)
+        >>> # Define product catalog (for agent-side discovery)
+        >>> products = [
+        ...     Product(id="roses", title="Red Roses"),
+        ...     Product(id="tulips", title="Tulips"),
+        ... ]
+        >>>
+        >>> # Create toolkit
+        >>> toolkit = UCPToolkit(
+        ...     merchant_url="http://localhost:8000",
+        ...     products=products,
+        ... )
         >>>
         >>> # Create agent
         >>> llm = ChatOpenAI(model="gpt-4o")
@@ -54,7 +63,7 @@ class UCPToolkit(BaseModel):
     Attributes:
         merchant_url: URL of the UCP merchant server
         agent_name: Name of this agent for UCP-Agent header
-        products: Optional custom product catalog
+        products: Product catalog (required)
         verbose: Enable verbose logging
     """
 
@@ -65,9 +74,8 @@ class UCPToolkit(BaseModel):
         default="langchain-ucp-agent",
         description="Name of this agent for UCP-Agent header",
     )
-    products: List[Product] | None = Field(
-        default=None,
-        description="Optional custom product catalog",
+    products: List[Product] = Field(
+        description="Product catalog for the store",
     )
     verbose: bool = Field(
         default=False,

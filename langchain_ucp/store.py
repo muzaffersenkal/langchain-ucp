@@ -28,14 +28,15 @@ logger = logging.getLogger(__name__)
 
 
 class Product(BaseModel):
-    """Product model for the catalog."""
+    """Product model for agent-side catalog discovery.
+
+    Note: This is a temporary solution for agent-side search/discovery.
+    When UCP product discovery is implemented, the full product catalog
+    will be fetched from the merchant via UCP.
+    """
 
     id: str
     title: str
-    price: int  # Price in cents
-    category: str = ""
-    description: str = ""
-    image_url: str | None = None
 
 
 class ProductSearchResult(BaseModel):
@@ -62,14 +63,14 @@ class UCPStore:
     def __init__(
         self,
         client: UCPClient,
-        products: list[Product] | None = None,
+        products: list[Product],
         verbose: bool = False,
     ):
         """Initialize UCP Store.
 
         Args:
             client: UCP HTTP client instance
-            products: Optional product catalog. If not provided, uses default.
+            products: Product catalog (required)
             verbose: Enable verbose logging
         """
         self.client = client
@@ -82,59 +83,13 @@ class UCPStore:
 
         # Initialize product catalog
         self.products: dict[str, Product] = {}
-        if products:
-            for product in products:
-                self.products[product.id] = product
-        else:
-            self._initialize_default_products()
+        for product in products:
+            self.products[product.id] = product
 
     def _log(self, message: str) -> None:
         """Log message if verbose mode is enabled."""
         if self.verbose:
             logger.debug(f"[UCPStore] {message}")
-
-    def _initialize_default_products(self) -> None:
-        """Initialize default product catalog (flower shop example)."""
-        default_products = [
-            Product(
-                id="bouquet_roses",
-                title="Bouquet of Red Roses",
-                price=3500,
-                category="flowers",
-            ),
-            Product(
-                id="bouquet_sunflowers",
-                title="Sunflower Bundle",
-                price=2500,
-                category="flowers",
-            ),
-            Product(
-                id="bouquet_tulips",
-                title="Spring Tulips",
-                price=3000,
-                category="flowers",
-            ),
-            Product(
-                id="orchid_white",
-                title="White Orchid",
-                price=4500,
-                category="flowers",
-            ),
-            Product(
-                id="pot_ceramic",
-                title="Ceramic Pot",
-                price=1500,
-                category="accessories",
-            ),
-            Product(
-                id="gardenias",
-                title="Gardenias",
-                price=2000,
-                category="flowers",
-            ),
-        ]
-        for product in default_products:
-            self.products[product.id] = product
 
     def search_products(self, query: str) -> ProductSearchResult:
         """Search the product catalog.
@@ -150,7 +105,7 @@ class UCPStore:
 
         matching = []
         for product in self.products.values():
-            searchable = f"{product.title} {product.category} {product.id}".lower()
+            searchable = f"{product.title} {product.id}".lower()
             for keyword in keywords:
                 if keyword in searchable and product not in matching:
                     matching.append(product)

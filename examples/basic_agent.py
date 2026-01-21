@@ -18,7 +18,19 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage
 
-from langchain_ucp import UCPToolkit
+from langchain_ucp import UCPToolkit, Product
+
+
+# Define your product catalog (for agent-side discovery)
+# Full product details come from the merchant via UCP
+PRODUCTS = [
+    Product(id="bouquet_roses", title="Bouquet of Red Roses"),
+    Product(id="bouquet_sunflowers", title="Sunflower Bundle"),
+    Product(id="bouquet_tulips", title="Spring Tulips"),
+    Product(id="orchid_white", title="White Orchid"),
+    Product(id="pot_ceramic", title="Ceramic Pot"),
+    Product(id="gardenias", title="Gardenias"),
+]
 
 
 async def main():
@@ -30,9 +42,10 @@ async def main():
     # Check for verbose flag
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
 
-    # Create toolkit (with optional verbose logging)
+    # Create toolkit with product catalog
     toolkit = UCPToolkit(
         merchant_url="http://localhost:8000",
+        products=PRODUCTS,
         verbose=verbose,
     )
 

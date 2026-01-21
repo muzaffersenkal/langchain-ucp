@@ -126,7 +126,7 @@ class SearchCatalogTool(BaseTool):
     name: str = "search_shopping_catalog"
     description: str = """Searches the product catalog for products that match the given query.
     Use this tool to find products before adding them to the cart.
-    Returns matching products with their IDs, titles, and prices."""
+    Returns matching products with their IDs and titles."""
     args_schema: Type[BaseModel] = SearchCatalogInput
     store: UCPStore = Field(exclude=True)
     verbose: bool = Field(default=False, exclude=True)
@@ -151,9 +151,7 @@ class SearchCatalogTool(BaseTool):
         self._log(f"Found {result.total} products")
         lines = [f"Found {result.total} product(s) for '{query}':\n"]
         for p in result.products:
-            lines.append(f"  - **{p.title}**")
-            lines.append(f"    - Product ID: `{p.id}`")
-            lines.append(f"    - Price: {format_price(p.price)}")
+            lines.append(f"  - **{p.title}** (Product ID: `{p.id}`)")
 
         return "\n".join(lines)
 
