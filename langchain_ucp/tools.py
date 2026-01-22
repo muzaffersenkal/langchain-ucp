@@ -1,20 +1,21 @@
-
-"""LangChain tools for UCP operations.
-
-These tools follow the patterns from the A2A business_agent implementation,
-adapted for LangChain's tool interface.
-"""
+"""LangChain tools for UCP operations."""
 
 import logging
+from abc import abstractmethod
 from typing import Any, Optional, Type
 
-from langchain_core.tools import BaseTool
 from langchain_core.callbacks import CallbackManagerForToolRun
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from langchain_ucp.store import UCPStore
 
 logger = logging.getLogger(__name__)
+
+
+# -----------------------------------------------------------------------------
+# Formatters
+# -----------------------------------------------------------------------------
 
 
 def format_price(cents: int) -> str:
@@ -24,12 +25,12 @@ def format_price(cents: int) -> str:
 
 def format_checkout_summary(checkout: Any) -> str:
     """Format checkout response into a readable summary."""
-    lines = []
-    lines.append(f"**Checkout ID:** {checkout.id}")
-    lines.append(f"**Status:** {checkout.status}")
-    lines.append(f"**Currency:** {checkout.currency}")
+    lines = [
+        f"**Checkout ID:** {checkout.id}",
+        f"**Status:** {checkout.status}",
+        f"**Currency:** {checkout.currency}",
+    ]
 
-    # Line items
     if checkout.line_items:
         lines.append("\n**Items in Cart:**")
         for item in checkout.line_items:
@@ -38,14 +39,12 @@ def format_checkout_summary(checkout: Any) -> str:
                 f"  - {item.item.title} x{item.quantity} @ {format_price(price)} each"
             )
 
-    # Totals
     if checkout.totals:
         lines.append("\n**Totals:**")
         for total in checkout.totals:
             display = getattr(total, "display_text", total.type.title())
             lines.append(f"  - {display}: {format_price(total.amount)}")
 
-    # Order confirmation
     if checkout.order:
         lines.append("\n**Order Confirmed!**")
         lines.append(f"  - Order ID: {checkout.order.id}")
@@ -55,7 +54,36 @@ def format_checkout_summary(checkout: Any) -> str:
     return "\n".join(lines)
 
 
-# --- Input Schemas ---
+def format_order_summary(order: dict[str, Any]) -> str:
+    """Format order response into a readable summary."""
+    lines = [
+        f"**Order ID:** {order.get('id', 'N/A')}",
+        f"**Checkout ID:** {order.get('checkout_id', 'N/A')}",
+    ]
+
+    if order.get("line_items"):
+        lines.append("\n**Items:**")
+        for item in order["line_items"]:
+            item_data = item.get("item", {})
+            qty = item.get("quantity", {})
+            total_qty = qty.get("total", 0) if isinstance(qty, dict) else qty
+            title = item_data.get("title", "Unknown")
+            status = item.get("status", "unknown")
+            lines.append(f"  - {title} x{total_qty} - Status: {status}")
+
+    if order.get("totals"):
+        lines.append("\n**Totals:**")
+        for total in order["totals"]:
+            lines.append(
+                f"  - {total.get('type', '').title()}: {format_price(total.get('amount', 0))}"
+            )
+
+    return "\n".join(lines)
+
+
+# -----------------------------------------------------------------------------
+# Input Schemas
+# -----------------------------------------------------------------------------
 
 
 class SearchCatalogInput(BaseModel):
@@ -117,23 +145,47 @@ class GetOrderInput(BaseModel):
     order_id: str = Field(description="The order ID to look up")
 
 
-# --- Tool Classes ---
+# -----------------------------------------------------------------------------
+# Base Tool
+# -----------------------------------------------------------------------------
 
 
-class SearchCatalogTool(BaseTool):
-    """Tool for searching the product catalog."""
+class UCPBaseTool(BaseTool):
+    """Base class for UCP tools with common functionality."""
 
-    name: str = "search_shopping_catalog"
-    description: str = """Searches the product catalog for products that match the given query.
-    Use this tool to find products before adding them to the cart.
-    Returns matching products with their IDs and titles."""
-    args_schema: Type[BaseModel] = SearchCatalogInput
     store: UCPStore = Field(exclude=True)
     verbose: bool = Field(default=False, exclude=True)
 
     def _log(self, message: str) -> None:
+        """Log message if verbose mode is enabled."""
         if self.verbose:
             logger.debug(f"[{self.name}] {message}")
+
+    def _run(self, *args, **kwargs) -> str:
+        """Sync run - not supported for async operations."""
+        raise NotImplementedError("Use async version")
+
+    @abstractmethod
+    async def _arun(self, *args, **kwargs) -> str:
+        """Async run - must be implemented by subclasses."""
+        pass
+
+
+# -----------------------------------------------------------------------------
+# Tool Implementations
+# -----------------------------------------------------------------------------
+
+
+class SearchCatalogTool(UCPBaseTool):
+    """Tool for searching the product catalog."""
+
+    name: str = "search_shopping_catalog"
+    description: str = (
+        "Searches the product catalog for products that match the given query. "
+        "Use this tool to find products before adding them to the cart. "
+        "Returns matching products with their IDs and titles."
+    )
+    args_schema: Type[BaseModel] = SearchCatalogInput
 
     def _run(
         self,
@@ -150,9 +202,10 @@ class SearchCatalogTool(BaseTool):
 
         self._log(f"Found {result.total} products")
         lines = [f"Found {result.total} product(s) for '{query}':\n"]
-        for p in result.products:
-            lines.append(f"  - **{p.title}** (Product ID: `{p.id}`)")
-
+        lines.extend(
+            f"  - **{p.title}** (Product ID: `{p.id}`)"
+            for p in result.products
+        )
         return "\n".join(lines)
 
     async def _arun(
@@ -164,29 +217,16 @@ class SearchCatalogTool(BaseTool):
         return self._run(query, run_manager)
 
 
-class AddToCheckoutTool(BaseTool):
+class AddToCheckoutTool(UCPBaseTool):
     """Tool for adding a product to the checkout session."""
 
     name: str = "add_to_checkout"
-    description: str = """Adds a product to the checkout session.
-    Creates a new checkout if one doesn't exist.
-    Use search_shopping_catalog first to find product IDs."""
+    description: str = (
+        "Adds a product to the checkout session. "
+        "Creates a new checkout if one doesn't exist. "
+        "Use search_shopping_catalog first to find product IDs."
+    )
     args_schema: Type[BaseModel] = AddToCheckoutInput
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        product_id: str,
-        quantity: int = 1,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Add to checkout synchronously - not supported."""
-        raise NotImplementedError("Use async version")
 
     async def _arun(
         self,
@@ -207,29 +247,15 @@ class AddToCheckoutTool(BaseTool):
             return f"Added {quantity}x {product.title} to cart.\n\n{format_checkout_summary(checkout)}"
         except Exception as e:
             logger.exception("Error adding to checkout")
-            return f"Error adding to cart: {str(e)}"
+            return f"Error adding to cart: {e}"
 
 
-class RemoveFromCheckoutTool(BaseTool):
+class RemoveFromCheckoutTool(UCPBaseTool):
     """Tool for removing a product from the checkout session."""
 
     name: str = "remove_from_checkout"
-    description: str = """Removes a product from the checkout session."""
+    description: str = "Removes a product from the checkout session."
     args_schema: Type[BaseModel] = RemoveFromCheckoutInput
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        product_id: str,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Remove from checkout synchronously - not supported."""
-        raise NotImplementedError("Use async version")
 
     async def _arun(
         self,
@@ -246,31 +272,18 @@ class RemoveFromCheckoutTool(BaseTool):
             return str(e)
         except Exception as e:
             logger.exception("Error removing from checkout")
-            return f"Error removing from cart: {str(e)}"
+            return f"Error removing from cart: {e}"
 
 
-class UpdateCheckoutTool(BaseTool):
+class UpdateCheckoutTool(UCPBaseTool):
     """Tool for updating product quantity in the checkout session."""
 
     name: str = "update_checkout"
-    description: str = """Updates the quantity of a product in the checkout session.
-    Set quantity to 0 to remove the item."""
+    description: str = (
+        "Updates the quantity of a product in the checkout session. "
+        "Set quantity to 0 to remove the item."
+    )
     args_schema: Type[BaseModel] = UpdateCheckoutInput
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        product_id: str,
-        quantity: int,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Update checkout synchronously - not supported."""
-        raise NotImplementedError("Use async version")
 
     async def _arun(
         self,
@@ -289,27 +302,14 @@ class UpdateCheckoutTool(BaseTool):
             return str(e)
         except Exception as e:
             logger.exception("Error updating checkout")
-            return f"Error updating cart: {str(e)}"
+            return f"Error updating cart: {e}"
 
 
-class GetCheckoutTool(BaseTool):
+class GetCheckoutTool(UCPBaseTool):
     """Tool for retrieving the current checkout session."""
 
     name: str = "get_checkout"
-    description: str = """Retrieves the current checkout session with all items and totals."""
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Get checkout synchronously - not supported."""
-        raise NotImplementedError("Use async version")
+    description: str = "Retrieves the current checkout session with all items and totals."
 
     async def _arun(
         self,
@@ -326,39 +326,19 @@ class GetCheckoutTool(BaseTool):
             return format_checkout_summary(checkout)
         except Exception as e:
             logger.exception("Error getting checkout")
-            return f"Error getting cart: {str(e)}"
+            return f"Error getting cart: {e}"
 
 
-class UpdateCustomerDetailsTool(BaseTool):
+class UpdateCustomerDetailsTool(UCPBaseTool):
     """Tool for updating customer details and delivery address."""
 
     name: str = "update_customer_details"
-    description: str = """Adds delivery address and buyer details to the checkout.
-    Provide the recipient's name, full address, and optionally email.
-    This prepares the checkout for payment."""
+    description: str = (
+        "Adds delivery address and buyer details to the checkout. "
+        "Provide the recipient's name, full address, and optionally email. "
+        "This prepares the checkout for payment."
+    )
     args_schema: Type[BaseModel] = UpdateCustomerDetailsInput
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        first_name: str,
-        last_name: str,
-        street_address: str,
-        address_locality: str,
-        address_region: str,
-        postal_code: str,
-        address_country: str = "US",
-        extended_address: Optional[str] = None,
-        email: Optional[str] = None,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Update customer details synchronously - not supported."""
-        raise NotImplementedError("Use async version")
 
     async def _arun(
         self,
@@ -393,29 +373,18 @@ class UpdateCustomerDetailsTool(BaseTool):
             return str(e)
         except Exception as e:
             logger.exception("Error updating customer details")
-            return f"Error updating customer details: {str(e)}"
+            return f"Error updating customer details: {e}"
 
 
-class StartPaymentTool(BaseTool):
+class StartPaymentTool(UCPBaseTool):
     """Tool for preparing checkout for payment."""
 
     name: str = "start_payment"
-    description: str = """Prepares the checkout for payment.
-    Call this after adding items and customer details.
-    Returns the checkout status and any missing information."""
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Start payment synchronously - not supported."""
-        raise NotImplementedError("Use async version")
+    description: str = (
+        "Prepares the checkout for payment. "
+        "Call this after adding items and customer details. "
+        "Returns the checkout status and any missing information."
+    )
 
     async def _arun(
         self,
@@ -429,37 +398,28 @@ class StartPaymentTool(BaseTool):
                 self._log(f"Payment not ready: {result}")
                 return f"Checkout is not ready. {result}"
             self._log(f"Checkout ready for payment, checkout_id={result.id}")
-            return f"Checkout is ready for payment!\n\n{format_checkout_summary(result)}\n\nUse complete_checkout to finalize the order."
+            return (
+                f"Checkout is ready for payment!\n\n"
+                f"{format_checkout_summary(result)}\n\n"
+                "Use complete_checkout to finalize the order."
+            )
         except ValueError as e:
             return str(e)
         except Exception as e:
             logger.exception("Error starting payment")
-            return f"Error preparing payment: {str(e)}"
+            return f"Error preparing payment: {e}"
 
 
-class CompleteCheckoutTool(BaseTool):
+class CompleteCheckoutTool(UCPBaseTool):
     """Tool for completing checkout and placing the order."""
 
     name: str = "complete_checkout"
-    description: str = """Processes the payment and completes the checkout.
-    Requires buyer info and shipping address to be set first.
-    Use 'mock_payment_handler' with 'success_token' for testing."""
+    description: str = (
+        "Processes the payment and completes the checkout. "
+        "Requires buyer info and shipping address to be set first. "
+        "Use 'mock_payment_handler' with 'success_token' for testing."
+    )
     args_schema: Type[BaseModel] = CompleteCheckoutInput
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        payment_handler_id: str = "mock_payment_handler",
-        payment_token: str = "success_token",
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Complete checkout synchronously - not supported."""
-        raise NotImplementedError("Use async version")
 
     async def _arun(
         self,
@@ -474,33 +434,21 @@ class CompleteCheckoutTool(BaseTool):
                 payment_handler_id=payment_handler_id,
                 payment_token=payment_token,
             )
-            self._log(f"Order completed! order_id={checkout.order.id if checkout.order else 'N/A'}")
+            order_id = checkout.order.id if checkout.order else "N/A"
+            self._log(f"Order completed! order_id={order_id}")
             return f"Order placed successfully!\n\n{format_checkout_summary(checkout)}"
         except ValueError as e:
             return str(e)
         except Exception as e:
             logger.exception("Error completing checkout")
-            return f"Error completing checkout: {str(e)}"
+            return f"Error completing checkout: {e}"
 
 
-class CancelCheckoutTool(BaseTool):
+class CancelCheckoutTool(UCPBaseTool):
     """Tool for cancelling the current checkout session."""
 
     name: str = "cancel_checkout"
-    description: str = """Cancels the current checkout session and clears the cart."""
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Cancel checkout synchronously - not supported."""
-        raise NotImplementedError("Use async version")
+    description: str = "Cancels the current checkout session and clears the cart."
 
     async def _arun(
         self,
@@ -516,29 +464,15 @@ class CancelCheckoutTool(BaseTool):
             return str(e)
         except Exception as e:
             logger.exception("Error cancelling checkout")
-            return f"Error cancelling checkout: {str(e)}"
+            return f"Error cancelling checkout: {e}"
 
 
-class GetOrderTool(BaseTool):
+class GetOrderTool(UCPBaseTool):
     """Tool for getting order details."""
 
     name: str = "get_order"
-    description: str = """Gets details of a placed order by ID."""
+    description: str = "Gets details of a placed order by ID."
     args_schema: Type[BaseModel] = GetOrderInput
-    store: UCPStore = Field(exclude=True)
-    verbose: bool = Field(default=False, exclude=True)
-
-    def _log(self, message: str) -> None:
-        if self.verbose:
-            logger.debug(f"[{self.name}] {message}")
-
-    def _run(
-        self,
-        order_id: str,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
-    ) -> str:
-        """Get order synchronously - not supported."""
-        raise NotImplementedError("Use async version")
 
     async def _arun(
         self,
@@ -549,31 +483,8 @@ class GetOrderTool(BaseTool):
         self._log(f"Getting order_id={order_id}")
         try:
             order = await self.store.get_order(order_id)
-
-            lines = [f"**Order ID:** {order.get('id', 'N/A')}"]
-            lines.append(f"**Checkout ID:** {order.get('checkout_id', 'N/A')}")
-
-            # Line items
-            if order.get("line_items"):
-                lines.append("\n**Items:**")
-                for item in order["line_items"]:
-                    item_data = item.get("item", {})
-                    qty = item.get("quantity", {})
-                    total_qty = qty.get("total", 0) if isinstance(qty, dict) else qty
-                    title = item_data.get("title", "Unknown")
-                    status = item.get("status", "unknown")
-                    lines.append(f"  - {title} x{total_qty} - Status: {status}")
-
-            # Totals
-            if order.get("totals"):
-                lines.append("\n**Totals:**")
-                for total in order["totals"]:
-                    lines.append(
-                        f"  - {total.get('type', '').title()}: {format_price(total.get('amount', 0))}"
-                    )
-
-            self._log(f"Retrieved order details")
-            return "\n".join(lines)
+            self._log("Retrieved order details")
+            return format_order_summary(order)
         except Exception as e:
             logger.exception("Error getting order")
-            return f"Error getting order: {str(e)}"
+            return f"Error getting order: {e}"
