@@ -30,6 +30,7 @@ def _get_commerce_examples() -> str:
     """Generate commerce UI examples using templates.
     
     Uses the helper functions from templates.py to generate consistent examples.
+    These are FORMAT TEMPLATES only - actual data must come from tool calls.
     """
     # Import here to avoid circular imports
     from langchain_ucp.a2ui.templates import (
@@ -41,70 +42,97 @@ def _get_commerce_examples() -> str:
     
     examples = []
     
-    # Product Card Example
+    # Add critical warning at the top
+    examples.append("""
+⚠️ CRITICAL: The examples below show the A2UI JSON FORMAT/STRUCTURE only.
+DO NOT use the example data (product names, prices, image URLs) directly!
+You MUST:
+1. FIRST call search_shopping_catalog tool to get REAL product data
+2. THEN generate A2UI JSON using the ACTUAL data returned from the tool
+3. NEVER copy example values - always use real data from tool responses
+""")
+    
+    # Product Card Example - use obvious placeholder values
     product_card = create_product_card(
-        product_id="product-123",
-        name="Red Roses",
-        price="$29.99",
-        image_url="https://example.com/roses.jpg",
-        description="Beautiful red roses bouquet",
+        product_id="{{PRODUCT_ID_FROM_TOOL}}",
+        name="{{PRODUCT_NAME_FROM_TOOL}}",
+        price="{{PRICE_FROM_TOOL}}",
+        image_url="{{IMAGE_URL_FROM_TOOL}}",
+        description="{{DESCRIPTION_FROM_TOOL}}",
     )
     examples.append(f"""
-=== PRODUCT CARD ===
-A single product card with image, name, price, and add to cart button:
+=== PRODUCT CARD FORMAT ===
+Format template for a single product card. Replace {{{{...}}}} placeholders with REAL data from search_shopping_catalog tool:
 
 {A2UI_DELIMITER}
 {json.dumps(product_card, indent=2)}
 """)
     
-    # Product List Example - Show multiple products to demonstrate list capability
+    # Product List Example - use obvious placeholder values
     products = [
-        {"id": "roses", "name": "Red Roses", "price": "$29.99", "imageUrl": "https://example.com/roses.jpg"},
-        {"id": "tulips", "name": "Tulips", "price": "$19.99", "imageUrl": "https://example.com/tulips.jpg"},
-        {"id": "sunflowers", "name": "Sunflowers", "price": "$24.99", "imageUrl": "https://example.com/sunflowers.jpg"},
-        {"id": "lilies", "name": "White Lilies", "price": "$34.99", "imageUrl": "https://example.com/lilies.jpg"},
-        {"id": "orchids", "name": "Orchids", "price": "$49.99", "imageUrl": "https://example.com/orchids.jpg"},
+        {"id": "{{PRODUCT_1_ID}}", "name": "{{PRODUCT_1_NAME}}", "price": "{{PRODUCT_1_PRICE}}", "imageUrl": "{{PRODUCT_1_IMAGE_URL}}"},
+        {"id": "{{PRODUCT_2_ID}}", "name": "{{PRODUCT_2_NAME}}", "price": "{{PRODUCT_2_PRICE}}", "imageUrl": "{{PRODUCT_2_IMAGE_URL}}"},
+        {"id": "{{PRODUCT_N_ID}}", "name": "{{PRODUCT_N_NAME}}", "price": "{{PRODUCT_N_PRICE}}", "imageUrl": "{{PRODUCT_N_IMAGE_URL}}"},
     ]
     product_list = create_product_list(
-        title="Available Products",
+        title="Search Results",
         products=products,
     )
     examples.append(f"""
-=== PRODUCT LIST ===
-A list of products for search results. IMPORTANT: Include ALL products from search results, not just one or two:
+=== PRODUCT LIST FORMAT ===
+Format template for product list. Replace {{{{...}}}} placeholders with REAL data from search_shopping_catalog tool.
+Include ALL products returned by the tool, not just 2-3:
 
 {A2UI_DELIMITER}
 {json.dumps(product_list, indent=2)}
 """)
     
-    # Checkout Example
+    # Checkout Example - use placeholder values for cart, EMPTY for address
     items = [
-        {"title": "Red Roses", "quantity": 2, "total": "$59.98"},
+        {"title": "{{ITEM_TITLE_FROM_CART}}", "quantity": "{{QUANTITY}}", "total": "{{ITEM_TOTAL}}"},
     ]
     checkout = create_checkout_ui(
-        checkout_id="checkout-123",
+        checkout_id="{{CHECKOUT_ID_FROM_TOOL}}",
         items=items,
-        total="$59.98",
+        total="{{CART_TOTAL_FROM_TOOL}}",
     )
     examples.append(f"""
-=== CHECKOUT FORM ===
-A checkout form with order summary and shipping fields:
+=== CHECKOUT FORM FORMAT ===
+Format template for checkout form with shipping address fields.
+
+WORKFLOW:
+1. Get cart data from get_checkout tool
+2. Show this form with:
+   - Cart items and total from the tool response
+   - ALL shipping address fields EMPTY (firstName="", lastName="", streetAddress="", city="", state="", zipCode="", email="")
+3. User fills in the form fields
+4. When user submits or provides address, call update_customer_details with their EXACT input
+5. ONLY after update_customer_details succeeds, proceed with start_payment and complete_checkout
+
+⚠️ CRITICAL:
+- Address fields MUST be empty strings ("") - let user fill them
+- NEVER pre-fill with example data like "John", "123 Main St"
+- When calling update_customer_details, use the EXACT values user provided
+- ⚠️ CHECKOUT CANNOT BE COMPLETED WITHOUT SHIPPING ADDRESS - ask user to provide it first!
 
 {A2UI_DELIMITER}
 {json.dumps(checkout, indent=2)}
 """)
     
-    # Order Confirmation Example
+    # Order Confirmation Example - use placeholder values
     confirmation = create_order_confirmation(
-        order_id="ORD-12345",
-        items_summary="2x Red Roses",
-        total="$59.98",
-        shipping_address="123 Main St, New York, NY 10001",
+        order_id="{{ORDER_ID_FROM_TOOL}}",
+        items_summary="{{ITEMS_SUMMARY_FROM_TOOL}}",
+        total="{{TOTAL_FROM_TOOL}}",
+        shipping_address="{{SHIPPING_ADDRESS_FROM_USER_INPUT}}",
         primary_color="#4CAF50",  # Green for success
     )
     examples.append(f"""
-=== ORDER CONFIRMATION ===
-An order confirmation card after successful purchase:
+=== ORDER CONFIRMATION FORMAT ===
+Format template for order confirmation after successful purchase.
+- Order ID, items, and total MUST come from complete_checkout tool response
+- Shipping address MUST come from what the user provided earlier
+- NEVER use example addresses like "123 Main St"
 
 {A2UI_DELIMITER}
 {json.dumps(confirmation, indent=2)}
@@ -134,6 +162,12 @@ def get_a2ui_system_prompt(
         f"""
 You can generate rich UIs using the A2UI (Agent-to-User Interface) format.
 
+MANDATORY WORKFLOW:
+1. ALWAYS call the appropriate tool FIRST (e.g., search_shopping_catalog for products)
+2. WAIT for the tool response with REAL data
+3. ONLY THEN generate A2UI JSON using the ACTUAL data from the tool response
+4. NEVER generate A2UI with made-up or example data
+
 When you need to show products, checkout information, or order details to the user,
 generate A2UI JSON in your response using the following format:
 
@@ -143,13 +177,22 @@ A2UI MESSAGE TYPES:
 - dataModelUpdate: Update data values that components reference
 - deleteSurface: Remove a surface
 
-IMPORTANT:
+IMPORTANT RULES:
 - Each UI must have a beginRendering, surfaceUpdate, and dataModelUpdate message
 - The JSON must be a valid array of A2UI messages
 - Do NOT wrap the JSON in markdown code blocks after the delimiter
 - Only include the delimiter and JSON when you want to render a UI
 - Component IDs must be unique and should NOT match data path names (e.g., use "product-name" not "name")
-- When displaying product lists, include ALL products from the data source, not just one or two
+- When displaying product lists, include ALL products from the tool response
+- ALL product data (name, price, image_url, id) MUST come from the tool response, NOT from examples
+- If a field (like price) is NOT present in the tool response, either omit it or show "N/A" - NEVER make up values
+
+⚠️ CRITICAL - USER INPUT HANDLING:
+- When user provides their name, address, or any personal information, you MUST use their EXACT input
+- NEVER substitute, modify, or make up names/addresses - use EXACTLY what the user typed
+- For update_customer_details tool: pass the EXACT values the user provided, character for character
+- Example: If user says "John Smith, 456 Oak Ave", use "John" for first_name, "Smith" for last_name, "456 Oak Ave" for street_address
+- NEVER use example names like "Jane Doe" or addresses like "123 Main St" - only use what the user actually typed
 
 RESPONSE FORMAT:
 1. Your response MUST be in two parts, separated by the delimiter: `{A2UI_DELIMITER}`

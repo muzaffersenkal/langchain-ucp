@@ -40,6 +40,8 @@ class Product(BaseModel):
 
     id: str
     title: str
+    description: str | None = None
+    image_url: str | None = None
 
 
 class ProductSearchResult(BaseModel):

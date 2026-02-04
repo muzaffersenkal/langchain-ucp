@@ -202,10 +202,13 @@ class SearchCatalogTool(UCPBaseTool):
 
         self._log(f"Found {result.total} products")
         lines = [f"Found {result.total} product(s) for '{query}':\n"]
-        lines.extend(
-            f"  - **{p.title}** (Product ID: `{p.id}`)"
-            for p in result.products
-        )
+        for p in result.products:
+            product_info = f"  - **{p.title}** (Product ID: `{p.id}`)"
+            if p.description:
+                product_info += f", Description: {p.description}"
+            if p.image_url:
+                product_info += f", Image URL: {p.image_url}"
+            lines.append(product_info)
         return "\n".join(lines)
 
     async def _arun(
